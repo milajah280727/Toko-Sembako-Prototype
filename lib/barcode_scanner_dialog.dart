@@ -1,9 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
-// Widget scanner yang bisa dipanggil di mana saja
-class BarcodeScannerDialog extends StatelessWidget {
+// Ubah dari StatelessWidget menjadi StatefulWidget
+class BarcodeScannerDialog extends StatefulWidget {
   const BarcodeScannerDialog({super.key});
+
+  @override
+  State<BarcodeScannerDialog> createState() => _BarcodeScannerDialogState();
+}
+
+class _BarcodeScannerDialogState extends State<BarcodeScannerDialog> {
+  // Tambahkan variabel penanda untuk mencegah scan ganda
+  bool _isScanned = false;
 
   @override
   Widget build(BuildContext context) {
@@ -20,11 +28,19 @@ class BarcodeScannerDialog extends StatelessWidget {
       ),
       body: MobileScanner(
         onDetect: (BarcodeCapture capture) {
-          final code = capture.barcodes.firstOrNull?.rawValue;
+          // Cek jika belum discan sebelumnya
+          if (!_isScanned) {
+            final code = capture.barcodes.firstOrNull?.rawValue;
 
-          if (code != null) {
-            // Tutup dialog dan kirim kode kembali
-            Navigator.pop(context, code);
+            if (code != null) {
+              // Set flag menjadi true agar tidak pop lagi
+              setState(() {
+                _isScanned = true;
+              });
+              
+              // Tutup dialog dan kirim kode kembali
+              Navigator.pop(context, code);
+            }
           }
         },
       ),

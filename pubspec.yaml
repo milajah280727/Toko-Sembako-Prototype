@@ -40,6 +40,11 @@ dependencies:
   barcode: ^2.2.9
   barcode_widget: ^2.0.4
   qr_flutter: ^4.1.0
+  image_picker: ^1.2.1
+  pdf: ^3.11.3
+  printing: ^5.14.2
+  flutter_image_compress: ^2.4.0
+  
   
 
 dev_dependencies:

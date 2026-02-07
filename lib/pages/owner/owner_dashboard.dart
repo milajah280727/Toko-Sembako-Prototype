@@ -13,17 +13,50 @@ class OwnerDashboard extends StatefulWidget {
 
 class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  
+  // Data Asli
   Map<String, int> _financials = {'income': 0, 'expense': 0, 'profit': 0};
   List<Map<String, dynamic>> _transactions = [];
   List<Product> _lowStockProducts = [];
   List<Map<String, dynamic>> _logs = [];
   bool _isLoading = true;
 
+  // Variabel Pencarian
+  final TextEditingController _searchController = TextEditingController();
+  int _activeTabIndex = 0; // Track tab aktif
+
+  // Data Hasil Filter
+  late List<Map<String, dynamic>> _filteredTransactions;
+  late List<Map<String, dynamic>> _filteredLogs;
+  late List<Product> _filteredLowStock;
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
+    
+    // Listener perubahan Tab
+    _tabController.addListener(() {
+      setState(() {
+        _activeTabIndex = _tabController.index;
+      });
+      // Reset pencarian saat ganti tab? (Opsional, disini kita biarkan textnya)
+      _filterData();
+    });
+
+    // Listener perubahan teks search
+    _searchController.addListener(() {
+      _filterData();
+    });
+
     _loadAllData();
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadAllData() async {
@@ -41,7 +74,57 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
       _transactions = results[1] as List<Map<String, dynamic>>;
       _lowStockProducts = results[2] as List<Product>;
       _logs = results[3] as List<Map<String, dynamic>>;
+      
+      // Init filtered lists
+      _filteredTransactions = List.from(_transactions);
+      _filteredLogs = List.from(_logs);
+      _filteredLowStock = List.from(_lowStockProducts);
+      
       _isLoading = false;
+    });
+  }
+
+  // --- LOGIKA PENCARIAN ---
+  void _filterData() {
+    String query = _searchController.text.toLowerCase();
+
+    setState(() {
+      // Filter berdasarkan tab yang aktif
+      switch (_activeTabIndex) {
+        case 0: // Keuangan (Tidak perlu filter)
+          break;
+        case 1: // Riwayat
+          if (query.isEmpty) {
+            _filteredTransactions = List.from(_transactions);
+          } else {
+            _filteredTransactions = _transactions.where((item) {
+              final namaKasir = item['users'] != null ? item['users']['nama_lengkap'].toLowerCase() : '';
+              final total = item['total_bayar'].toString();
+              return namaKasir.contains(query) || total.contains(query);
+            }).toList();
+          }
+          break;
+        case 2: // Log
+          if (query.isEmpty) {
+            _filteredLogs = List.from(_logs);
+          } else {
+            _filteredLogs = _logs.where((item) {
+              final aktivitas = item['aktivitas'].toLowerCase();
+              final namaUser = item['users'] != null ? item['users']['nama_lengkap'].toLowerCase() : '';
+              return aktivitas.contains(query) || namaUser.contains(query);
+            }).toList();
+          }
+          break;
+        case 3: // Stok Menipis
+          if (query.isEmpty) {
+            _filteredLowStock = List.from(_lowStockProducts);
+          } else {
+            _filteredLowStock = _lowStockProducts.where((item) {
+              return item.namaProduk.toLowerCase().contains(query);
+            }).toList();
+          }
+          break;
+      }
     });
   }
 
@@ -52,12 +135,27 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text('Catat Pengeluaran'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(controller: ketController, decoration: const InputDecoration(labelText: 'Keterangan (Misal: Beli Plastik)')),
-            TextField(controller: nomController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Nominal')),
+            TextField(
+              controller: ketController, 
+              decoration: InputDecoration(
+                labelText: 'Keterangan',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              )
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: nomController, 
+              keyboardType: TextInputType.number, 
+              decoration: InputDecoration(
+                labelText: 'Nominal',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              )
+            ),
           ],
         ),
         actions: [
@@ -81,7 +179,6 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
 
   // --- DIALOG 1: DETAIL TRANSAKSI ---
   void _showTransactionDetail(Map<String, dynamic> trans) async {
-    // Tampilkan loading dialog
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -89,21 +186,19 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
     );
 
     try {
-      // Ambil detail item produk
+      // Pakai filtered data untuk cari detail, tapi aslinya tetap trans asli untuk id
       final details = await SupabaseService().getTransactionDetails(trans['id_transaksi']);
       
-      // Tutup dialog loading (Kita pakai context utama untuk pop yang paling atas)
       if (mounted) Navigator.pop(context); 
 
-      // Ambil data user
       final userData = trans['users'];
       final namaUser = userData != null ? userData['nama_lengkap'] : 'Unknown';
 
-      // Tampilkan dialog detail
       if (mounted) {
         showDialog(
           context: context,
           builder: (dialogContext) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
             title: const Text('Detail Transaksi'),
             content: SizedBox(
               width: double.maxFinite,
@@ -112,21 +207,16 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // PROFIL KASIR
-                    Card(
-                      color: Colors.orange[50],
-                      child: ListTile(
-                        leading: const Icon(Icons.person, color: Colors.orange),
-                        title: Text('Kasir: $namaUser'),
-                        subtitle: Text('Waktu: ${trans['tanggal'].toString().split('.')[0]}'),
-                      ),
-                    ),
+                    Card(color: Colors.orange[50], child: ListTile(
+                      leading: const Icon(Icons.person, color: Colors.orange),
+                      title: Text('Kasir: $namaUser'),
+                      subtitle: Text('Waktu: ${trans['tanggal'].toString().split('.')[0]}'),
+                    )),
                     const SizedBox(height: 10),
                     const Divider(),
                     const Text('Barang yang Dibeli:', style: TextStyle(fontWeight: FontWeight.bold)),
                     const SizedBox(height: 5),
                     
-                    // LIST DETAIL PRODUK
                     ...details.map((detail) {
                       final prod = detail['produk'];
                       return ListTile(
@@ -161,7 +251,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
         );
       }
     } catch (e) {
-      if (mounted) Navigator.pop(context); // Tutup loading jika error
+      if (mounted) Navigator.pop(context);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Gagal memuat detail: $e')));
       }
@@ -176,18 +266,17 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
     showDialog(
       context: context,
       builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text('Detail Aktivitas'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // PROFIL ADMIN/KASIR
             Card(
               color: Colors.blue[50],
               child: ListTile(
                 leading: const Icon(Icons.admin_panel_settings, color: Colors.blue),
                 title: Text('Dilakukan Oleh: $namaUser'),
-                // Perbaikan String Interpolation
                 subtitle: Text('Waktu: ${DateTime.parse(log['waktu']).toLocal().toString().split('.')[0]}'),
               ),
             ),
@@ -201,10 +290,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
                 borderRadius: BorderRadius.circular(8),
               ),
               width: double.infinity,
-              child: Text(
-                log['aktivitas'],
-                style: const TextStyle(fontSize: 14),
-              ),
+              child: Text(log['aktivitas'], style: const TextStyle(fontSize: 14)),
             ),
           ],
         ),
@@ -221,6 +307,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.grey[50],
       appBar: AppBar(
         title: const Text('Dashboard Owner'),
         backgroundColor: Colors.orange,
@@ -228,12 +315,12 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
           controller: _tabController,
           indicatorColor: Colors.white,
           labelColor: Colors.white,
-          isScrollable: true,
+          isScrollable: false, // Tetapkan agar tidak scroll
           tabs: const [
             Tab(text: 'Keuangan', icon: Icon(Icons.account_balance_wallet)),
             Tab(text: 'Riwayat', icon: Icon(Icons.history)),
             Tab(text: 'Log', icon: Icon(Icons.list_alt)),
-            Tab(text: 'Stok Menipis', icon: Icon(Icons.warning_amber)),
+            Tab(text: 'Stok', icon: Icon(Icons.warning_amber)),
           ],
         ),
         actions: [
@@ -241,17 +328,49 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
           IconButton(icon: const Icon(Icons.logout), onPressed: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginPage())))
         ],
       ),
-      body: _isLoading 
-          ? const Center(child: CircularProgressIndicator())
-          : TabBarView(
-              controller: _tabController,
-              children: [
-                _buildKeuanganTab(),
-                _buildRiwayatTab(),
-                _buildLogTab(),
-                _buildStokTab(),
-              ],
+      body: Column(
+        children: [
+          // --- SEARCH BAR (Muncul di semua tab kecuali Keuangan) ---
+          if (_activeTabIndex != 0)
+            Container(
+              color: Colors.orange,
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(30),
+                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 5, offset: Offset(0, 3))],
+                ),
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: _activeTabIndex == 1 ? 'Cari riwayat (Kasir/Nominal)...' :
+                                _activeTabIndex == 2 ? 'Cari log aktivitas...' :
+                                                  'Cari produk stok menipis...',
+                    prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                  ),
+                ),
+              ),
             ),
+
+          // --- TAB BAR VIEW ---
+          Expanded(
+            child: _isLoading 
+                ? const Center(child: CircularProgressIndicator(color: Colors.orange))
+                : TabBarView(
+                    controller: _tabController,
+                    children: [
+                      _buildKeuanganTab(),
+                      _buildRiwayatTab(),
+                      _buildLogTab(),
+                      _buildStokTab(),
+                    ],
+                  ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -262,36 +381,86 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
       padding: const EdgeInsets.all(16.0),
       child: Column(
         children: [
-          Card(color: Colors.green[50], child: ListTile(leading: const Icon(Icons.trending_up, color: Colors.green), title: const Text('Total Pendapatan'), subtitle: Text(formatCurrency.format(_financials['income'])))),
-          Card(color: Colors.red[50], child: ListTile(leading: const Icon(Icons.trending_down, color: Colors.red), title: const Text('Total Pengeluaran'), subtitle: Text(formatCurrency.format(_financials['expense'])))),
-          Card(color: Colors.blue[50], child: ListTile(leading: const Icon(Icons.account_balance, color: Colors.blue), title: const Text('Laba Bersih', style: TextStyle(fontWeight: FontWeight.bold)), subtitle: Text(formatCurrency.format(_financials['profit'])))),
+          Card(
+            elevation: 2,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            color: Colors.green[50], 
+            child: ListTile(
+              leading: const Icon(Icons.trending_up, color: Colors.green), 
+              title: const Text('Total Pendapatan'), 
+              subtitle: Text(formatCurrency.format(_financials['income']))
+            )
+          ),
+          Card(
+            elevation: 2,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            color: Colors.red[50], 
+            child: ListTile(
+              leading: const Icon(Icons.trending_down, color: Colors.red), 
+              title: const Text('Total Pengeluaran'), 
+              subtitle: Text(formatCurrency.format(_financials['expense']))
+            )
+          ),
+          Card(
+            elevation: 2,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            color: Colors.blue[50], 
+            child: ListTile(
+              leading: const Icon(Icons.account_balance, color: Colors.blue), 
+              title: const Text('Laba Bersih', style: TextStyle(fontWeight: FontWeight.bold)), 
+              subtitle: Text(formatCurrency.format(_financials['profit']))
+            )
+          ),
           const SizedBox(height: 20),
-          SizedBox(width: double.infinity, child: ElevatedButton.icon(onPressed: _showAddExpenseDialog, icon: const Icon(Icons.add_circle), label: const Text('Catat Pengeluaran Baru'), style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white)))
+          SizedBox(
+            width: double.infinity, 
+            child: ElevatedButton.icon(
+              onPressed: _showAddExpenseDialog, 
+              icon: const Icon(Icons.add_circle), 
+              label: const Text('Catat Pengeluaran Baru'), 
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red, 
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              )
+            )
+          )
         ],
       ),
     );
   }
 
   Widget _buildRiwayatTab() {
-    return _transactions.isEmpty
-        ? const Center(child: Text('Belum ada transaksi'))
+    return _filteredTransactions.isEmpty
+        ? Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.receipt_long, size: 60, color: Colors.grey[300]),
+                const SizedBox(height: 10),
+                Text(_transactions.isEmpty ? 'Belum ada transaksi' : 'Riwayat tidak ditemukan', style: const TextStyle(color: Colors.grey)),
+              ],
+            ),
+          )
         : ListView.builder(
-            itemCount: _transactions.length,
+            padding: const EdgeInsets.all(8),
+            itemCount: _filteredTransactions.length,
             itemBuilder: (context, index) {
-              final trans = _transactions[index];
+              final trans = _filteredTransactions[index];
               final namaKasir = trans['users'] != null ? trans['users']['nama_lengkap'] : 'Unknown';
 
               return Card(
-                margin: const EdgeInsets.all(8),
+                margin: const EdgeInsets.symmetric(vertical: 4),
                 child: InkWell(
                   onTap: () => _showTransactionDetail(trans),
                   child: ListTile(
-                    title: Text('Rp ${trans['total_bayar']}'),
+                    title: Text('Rp ${trans['total_bayar']}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.orange)),
                     subtitle: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Kasir: $namaKasir'),
-                        Text('Waktu: ${trans['tanggal'].toString().split('.')[0]}'),
+                        Text('Kasir: $namaKasir', style: const TextStyle(fontSize: 12)),
+                        Text('Waktu: ${trans['tanggal'].toString().split('.')[0]}', style: const TextStyle(fontSize: 10, color: Colors.grey)),
                       ],
                     ),
                     trailing: const Icon(Icons.chevron_right),
@@ -303,22 +472,36 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
   }
 
   Widget _buildLogTab() {
-    return _logs.isEmpty
-        ? const Center(child: Text('Belum ada aktivitas tercatat'))
+    return _filteredLogs.isEmpty
+        ? Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.history_toggle_off, size: 60, color: Colors.grey[300]),
+                const SizedBox(height: 10),
+                Text(_logs.isEmpty ? 'Belum ada aktivitas tercatat' : 'Log tidak ditemukan', style: const TextStyle(color: Colors.grey)),
+              ],
+            ),
+          )
         : ListView.builder(
-            itemCount: _logs.length,
+            padding: const EdgeInsets.all(8),
+            itemCount: _filteredLogs.length,
             itemBuilder: (context, index) {
-              final log = _logs[index];
+              final log = _filteredLogs[index];
               final namaUser = log['users'] != null ? log['users']['nama_lengkap'] : 'Unknown';
 
               return Card(
-                margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                margin: const EdgeInsets.symmetric(vertical: 4),
                 child: InkWell(
                   onTap: () => _showLogDetail(log),
                   child: ListTile(
-                    leading: const CircleAvatar(child: Icon(Icons.verified_user, size: 20), backgroundColor: Colors.blueAccent, foregroundColor: Colors.white),
-                    title: Text(log['aktivitas'], style: const TextStyle(fontWeight: FontWeight.w600)),
-                    subtitle: Text('Oleh: $namaUser'),
+                    leading: const CircleAvatar(
+                      child: Icon(Icons.verified_user, size: 20), 
+                      backgroundColor: Colors.blueAccent, 
+                      foregroundColor: Colors.white
+                    ),
+                    title: Text(log['aktivitas'], style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                    subtitle: Text('Oleh: $namaUser', style: const TextStyle(fontSize: 11)),
                     trailing: const Icon(Icons.chevron_right),
                   ),
                 ),
@@ -328,20 +511,30 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
   }
 
   Widget _buildStokTab() {
-    return _lowStockProducts.isEmpty
-        ? const Center(child: Text('Stok aman, tidak ada barang menipis.'))
+    return _filteredLowStock.isEmpty
+        ? Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.inventory, size: 60, color: Colors.grey[300]),
+                const SizedBox(height: 10),
+                Text(_lowStockProducts.isEmpty ? 'Stok aman, tidak ada barang menipis.' : 'Produk tidak ditemukan', style: const TextStyle(color: Colors.grey)),
+              ],
+            ),
+          )
         : ListView.builder(
-            itemCount: _lowStockProducts.length,
+            padding: const EdgeInsets.all(8),
+            itemCount: _filteredLowStock.length,
             itemBuilder: (context, index) {
-              final product = _lowStockProducts[index];
+              final product = _filteredLowStock[index];
               return Card(
-                color: Colors.orange[100], 
-                margin: const EdgeInsets.all(8), 
+                color: Colors.orange[50], 
+                margin: const EdgeInsets.symmetric(vertical: 4), 
                 child: ListTile(
                   leading: const Icon(Icons.warning, color: Colors.red),
                   title: Text(product.namaProduk, style: const TextStyle(fontWeight: FontWeight.bold)),
                   subtitle: Text('Kategori: ${product.kategori}'),
-                  trailing: Text('Sisa: ${product.stok}', style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 18))
+                  trailing: Text('Sisa: ${product.stok}', style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 16))
                 ),
               );
             },

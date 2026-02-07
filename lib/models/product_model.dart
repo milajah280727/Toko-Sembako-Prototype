@@ -3,16 +3,18 @@ class Product {
   final String namaProduk;
   final String kategori;
   final int hargaJual;
-  int stok; // Ganti dari 'final int stok' menjadi 'int stok'
+  int stok;
   final String barcode;
+  final String? gambar; // TAMBAHKAN INI
 
   Product({
-    this.id, 
+    this.id,
     required this.namaProduk,
     required this.kategori,
     required this.hargaJual,
     required this.stok,
     this.barcode = '',
+    this.gambar, // TAMBAHKAN INI
   });
 
   factory Product.fromMap(Map<String, dynamic> map) {
@@ -23,6 +25,7 @@ class Product {
       hargaJual: map['harga_jual'],
       stok: map['stok'],
       barcode: map['barcode'] ?? '',
+      gambar: map['gambar'], // TAMBAHKAN INI
     );
   }
 
@@ -34,6 +37,7 @@ class Product {
       'harga_jual': hargaJual,
       'stok': stok,
       'barcode': barcode,
+      'gambar': gambar, // TAMBAHKAN INI
     };
   }
 }
