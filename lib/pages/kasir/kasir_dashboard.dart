@@ -98,7 +98,7 @@ class _KasirDashboardState extends State<KasirDashboard> {
   // Fungsi Tambah ke Keranjang Utama
   void _addToCart(Product product) {
     if (product.id == -1) return; // Cegah produk dummy
-    if (product.stok <= 0) {
+    if (product.totalStok <= 0) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Stok ${product.namaProduk} habis!')));
       return;
     }
@@ -106,7 +106,7 @@ class _KasirDashboardState extends State<KasirDashboard> {
     setState(() {
       if (_cart.containsKey(product.id!)) {
         // Jika barang sudah ada, cek stok max
-        if (_cart[product.id]!.qty < product.stok) {
+        if (_cart[product.id]!.qty < product.totalStok) {
           _cart[product.id]!.qty++;
         } else {
            if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Stok maksimal tercapai')));
@@ -461,14 +461,14 @@ class _KasirDashboardState extends State<KasirDashboard> {
                                           Container(
                                             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                             decoration: BoxDecoration(
-                                              color: product.stok < 5 ? Colors.red.shade50 : Colors.grey.shade200,
+                                              color: product.totalStok < 5 ? Colors.red.shade50 : Colors.grey.shade200,
                                               borderRadius: BorderRadius.circular(6),
                                             ),
                                             child: Text(
-                                              'Sisa: ${product.stok}',
+                                              'Sisa: ${product.totalStok}',
                                               style: TextStyle(
                                                 fontSize: 10,
-                                                color: product.stok < 5 ? Colors.red : Colors.black54,
+                                                color: product.totalStok < 5 ? Colors.red : Colors.black54,
                                                 fontWeight: FontWeight.bold,
                                               ),
                                             ),

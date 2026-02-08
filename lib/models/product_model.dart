@@ -3,18 +3,25 @@ class Product {
   final String namaProduk;
   final String kategori;
   final int hargaJual;
-  int stok;
   final String barcode;
-  final String? gambar; // TAMBAHKAN INI
+  final String? gambar;
+  final int hargaBeli; 
+  
+  // --- TAMBAHKAN INI KEMBALI (Untuk keperluan Tampilan UI) ---
+  // Field ini tidak akan disimpan ke DB, tapi diisi oleh fungsi getProductsWithStock
+  final int totalStok; 
+  final DateTime? nearestExpDate; 
 
   Product({
     this.id,
     required this.namaProduk,
     required this.kategori,
     required this.hargaJual,
-    required this.stok,
     this.barcode = '',
-    this.gambar, // TAMBAHKAN INI
+    this.gambar,
+    required this.hargaBeli,
+    required this.totalStok,      // Default 0
+    this.nearestExpDate,         // Default null
   });
 
   factory Product.fromMap(Map<String, dynamic> map) {
@@ -23,9 +30,12 @@ class Product {
       namaProduk: map['nama_produk'],
       kategori: map['kategori'],
       hargaJual: map['harga_jual'],
-      stok: map['stok'],
       barcode: map['barcode'] ?? '',
-      gambar: map['gambar'], // TAMBAHKAN INI
+      gambar: map['gambar'],
+      hargaBeli: map['harga_beli'] ?? 0,
+      // Ambil dari hasil kalkulasi service (key 'total_stok' dan 'nearest_exp')
+      totalStok: map['total_stok'] ?? 0, 
+      nearestExpDate: map['nearest_exp'] != null ? DateTime.parse(map['nearest_exp']) : null,
     );
   }
 
@@ -35,9 +45,10 @@ class Product {
       'nama_produk': namaProduk,
       'kategori': kategori,
       'harga_jual': hargaJual,
-      'stok': stok,
       'barcode': barcode,
-      'gambar': gambar, // TAMBAHKAN INI
+      'gambar': gambar,
+      'harga_beli': hargaBeli,
+      // totalStok dan nearestExpDate TIDAK perlu dikirim ke DB saat save/update
     };
   }
 }

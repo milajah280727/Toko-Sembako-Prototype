@@ -8,6 +8,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:intl/intl.dart';
 
 import '../../supabase_service.dart';
 import '../../models/product_model.dart';
@@ -26,36 +27,40 @@ class _ProductFormPageState extends State<ProductFormPage> {
   final _namaController = TextEditingController();
   final _kategoriController = TextEditingController();
   final _hargaController = TextEditingController();
-  final _stokController = TextEditingController();
   final _barcodeController = TextEditingController();
+  final _hargaBeliController = TextEditingController();
 
   bool _isLoading = false;
   final int _currentUserId = 1;
-  
+
   // Variabel untuk Gambar
   File? _imageFile;
-  String? _existingImageUrl; // Untuk mode edit, simpan URL gambar lama
+  String? _existingImageUrl;
   final ImagePicker _picker = ImagePicker();
 
   @override
   void initState() {
     super.initState();
-    
+
     if (widget.product == null) {
+      // MODE TAMBAH BARU
       _barcodeController.text = _generateRandomBarcode();
       _namaController.text = '';
       _kategoriController.text = '';
       _hargaController.text = '';
-      _stokController.text = '0';
+      _hargaBeliController.text = '0';
     } else {
-      // MODE EDIT
+      // MODE EDIT (Hanya data master, Stok diambil dari display saja bukan diinput disini)
       final p = widget.product!;
       _namaController.text = p.namaProduk;
       _kategoriController.text = p.kategori;
       _hargaController.text = p.hargaJual.toString();
-      _stokController.text = p.stok.toString();
       _barcodeController.text = p.barcode;
-      _existingImageUrl = p.gambar; // Simpan gambar lama
+      _existingImageUrl = p.gambar;
+      _hargaBeliController.text = p.hargaBeli.toString();
+      
+      // Catatan: Kita TIDAK mengembalikan nilai stok atau exp ke input form,
+      // karena sekarang stok diatur lewat Restock.
     }
   }
 
@@ -68,13 +73,44 @@ class _ProductFormPageState extends State<ProductFormPage> {
     return barcode;
   }
 
-  // --- FUNGSI PILIH GAMBAR ---
-  // --- FUNGSI PILIH GAMBAR (DENGAN KOMPRESI) ---
-  Future<void> _pickImage() async {
-    final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
-    
+  // --- FUNGSI PILIH SUMBER GAMBAR (KAMERA / GALERI) ---
+  void _showPicker(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      builder: (BuildContext bc) {
+        return SafeArea(
+          child: Container(
+            child: Wrap(
+              children: <Widget>[
+                ListTile(
+                  leading: const Icon(Icons.photo_library),
+                  title: const Text('Galeri'),
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    _pickImage(ImageSource.gallery);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.photo_camera),
+                  title: const Text('Kamera'),
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    _pickImage(ImageSource.camera);
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // --- FUNGSI AMBIL & KOMPRESI GAMBAR ---
+  Future<void> _pickImage(ImageSource source) async {
+    final XFile? image = await _picker.pickImage(source: source);
+
     if (image != null) {
-      // Tampilkan loading sementara karena kompresi butuh waktu
       showDialog(
         context: context,
         barrierDismissible: false,
@@ -82,14 +118,10 @@ class _ProductFormPageState extends State<ProductFormPage> {
       );
 
       try {
-        // Panggil fungsi kompresi
         File compressedImage = await _compressImage(File(image.path));
 
         if (mounted) {
-          // Tutup dialog loading
           Navigator.pop(context);
-          
-          // Update state dengan gambar yang sudah dikecilkan
           setState(() {
             _imageFile = compressedImage;
           });
@@ -105,17 +137,13 @@ class _ProductFormPageState extends State<ProductFormPage> {
     }
   }
 
-  // --- FUNGSI KOMPRESI GAMBAR ---
   Future<File> _compressImage(File file) async {
-    // Tentukan jalur penyimpanan sementara untuk gambar hasil kompresi
     final path = file.absolute.path;
     final lastIndex = path.lastIndexOf(RegExp(r'\.'));
     final split = path.substring(0, (lastIndex + 1));
-    final outPath = '${split}compressed_${DateTime.now().millisecondsSinceEpoch}.jpg';
+    final outPath =
+        '${split}compressed_${DateTime.now().millisecondsSinceEpoch}.jpg';
 
-    // Lakukan kompresi
-    // quality: 70 (0-100), semakin kecil semakin jelek kualitasnya tapi ukurannya kecil
-    // minWidth: 800, memperkecil resolusi lebar jadi 800px (cukup besar untuk produk)
     var result = await FlutterImageCompress.compressAndGetFile(
       file.absolute.path,
       outPath,
@@ -125,35 +153,29 @@ class _ProductFormPageState extends State<ProductFormPage> {
     );
 
     if (result == null) {
-      return file; // Jika gagal kompresi, pakai yang asli
+      return file;
     }
     return File(result.path);
   }
 
-  // --- FUNGSI UPLOAD GAMBAR KE SUPABASE STORAGE (VERSI PERBAIKAN) ---
   Future<String> _uploadImage(String fileName) async {
-    // Jika tidak ada gambar baru dan mode edit, pakai gambar lama
-    if (_imageFile == null) return _existingImageUrl ?? ''; // Jika baru dan kosong, return string kosong
+    if (_imageFile == null) return _existingImageUrl ?? '';
 
     try {
-      // Pastikan nama bucket di sini SAMA PERSIS dengan nama di Supabase Dashboard
-      String bucketName = 'products-image'; 
-      
+      String bucketName = 'products-image';
       final path = '$fileName-${DateTime.now().millisecondsSinceEpoch}';
-      
-      print("Mulai upload ke bucket: $bucketName dengan path: $path"); // Debugging
 
-      // Upload
-      await Supabase.instance.client.storage.from(bucketName).upload(path, _imageFile!);
-
-      // Ambil URL Publik
-      final imageUrl = Supabase.instance.client.storage.from(bucketName).getPublicUrl(path);
-      
-      print("Sukses Upload: $imageUrl"); // Debugging
+      print("Mulai upload ke bucket: $bucketName dengan path: $path");
+      await Supabase.instance.client.storage
+          .from(bucketName)
+          .upload(path, _imageFile!);
+      final imageUrl = Supabase.instance.client.storage
+          .from(bucketName)
+          .getPublicUrl(path);
+      print("Sukses Upload: $imageUrl");
       return imageUrl;
     } catch (e) {
-      print("GAGAL Upload Image: $e"); // Debugging
-      // Lempar error agar bisa ditangkap di _saveProduct
+      print("GAGAL Upload Image: $e");
       throw Exception("Gagal upload gambar: $e");
     }
   }
@@ -169,30 +191,35 @@ class _ProductFormPageState extends State<ProductFormPage> {
     }
   }
 
-  // --- FUNGSI CETAK BARCODE KE PDF ---
   Future<void> _generateAndPrintBarcode() async {
     final pdf = pw.Document();
-    
-    // Ambil gambar barcode (konversi widget ke PDF agak rumit, 
-    // jadi kita buat ulang barcode menggunakan library PDF)
-    
-    // Gunakan nama file untuk PDF jika belum disimpan, atau nama produk
-    String productName = _namaController.text.isEmpty ? 'Produk Baru' : _namaController.text;
+    String productName = _namaController.text.isEmpty
+        ? 'Produk Baru'
+        : _namaController.text;
     String price = _hargaController.text.isEmpty ? '0' : _hargaController.text;
     String barcodeData = _barcodeController.text;
 
     pdf.addPage(
       pw.Page(
-        pageFormat: PdfPageFormat.a6, // Ukuran kecil cocok untuk label
+        pageFormat: PdfPageFormat.a6,
         margin: const pw.EdgeInsets.all(10),
         build: (pw.Context context) {
           return pw.Center(
             child: pw.Column(
               mainAxisSize: pw.MainAxisSize.min,
               children: [
-                pw.Text(productName, style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+                pw.Text(
+                  productName,
+                  style: pw.TextStyle(
+                    fontSize: 18,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
                 pw.SizedBox(height: 5),
-                pw.Text('Rp $price', style: pw.TextStyle(fontSize: 14, color: PdfColors.orange800)),
+                pw.Text(
+                  'Rp $price',
+                  style: pw.TextStyle(fontSize: 14, color: PdfColors.orange800),
+                ),
                 pw.SizedBox(height: 10),
                 pw.BarcodeWidget(
                   barcode: pw.Barcode.code128(),
@@ -210,14 +237,12 @@ class _ProductFormPageState extends State<ProductFormPage> {
       ),
     );
 
-    // Tampilkan dialog preview/print
     await Printing.layoutPdf(
       onLayout: (PdfPageFormat format) async => pdf.save(),
       name: 'Barcode_$productName.pdf',
     );
   }
 
-    // --- FUNGSI SIMPAN PRODUK (VERSI PERBAIKAN) ---
   Future<void> _saveProduct() async {
     if (_namaController.text.isEmpty || _hargaController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -229,45 +254,65 @@ class _ProductFormPageState extends State<ProductFormPage> {
     setState(() => _isLoading = true);
 
     try {
-      // 1. Coba Upload Gambar Dulu
-      // Jika gagal upload, akan langsung masuk ke 'catch' di bawah
       String? finalImageUrl = await _uploadImage(_namaController.text);
 
-      // Jika produk baru dan tidak ada gambar, kita set null atau kosong
-      if (finalImageUrl == null && _existingImageUrl != null && widget.product != null) {
+      if (finalImageUrl == null &&
+          _existingImageUrl != null &&
+          widget.product != null) {
         finalImageUrl = _existingImageUrl;
       }
 
+      int parsedHargaBeli = 0;
+      if (_hargaBeliController.text.isNotEmpty) {
+        parsedHargaBeli = int.parse(_hargaBeliController.text);
+      }
+
+      // Membuat objek Product (Hanya data Master)
       final newProduct = Product(
-        id: widget.product?.id, 
+        id: widget.product?.id,
         namaProduk: _namaController.text,
-        kategori: _kategoriController.text.isEmpty ? 'Umum' : _kategoriController.text,
+        kategori: _kategoriController.text.isEmpty
+            ? 'Umum'
+            : _kategoriController.text,
         hargaJual: int.parse(_hargaController.text),
-        stok: int.parse(_stokController.text.isEmpty ? '0' : _stokController.text),
         barcode: _barcodeController.text,
-        gambar: finalImageUrl, // Kirim URL gambar
+        gambar: finalImageUrl,
+        hargaBeli: parsedHargaBeli,
+        // Stok dan Exp di-set default untuk Master Product
+        totalStok: 0, 
+        nearestExpDate: null,
       );
 
-      // 2. Simpan Data ke Database
       if (widget.product == null) {
         await SupabaseService().createProduct(newProduct.toMap());
-        await SupabaseService().addLog(_currentUserId, 'Menambah produk baru: ${_namaController.text}');
+        await SupabaseService().addLog(
+          _currentUserId,
+          'Menambah produk baru: ${_namaController.text}',
+        );
       } else {
-        await SupabaseService().updateProduct(newProduct.id!, newProduct.toMap());
-        await SupabaseService().addLog(_currentUserId, 'Mengedit produk: ${_namaController.text}');
+        await SupabaseService().updateProduct(
+          newProduct.id!,
+          newProduct.toMap(),
+        );
+        await SupabaseService().addLog(
+          _currentUserId,
+          'Mengedit produk: ${_namaController.text}',
+        );
       }
 
       if (mounted) {
-        Navigator.pop(context, true); 
+        Navigator.pop(context, true);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Data berhasil disimpan')),
         );
       }
     } catch (e) {
-      // Bagian ini akan muncul jika upload gagal atau simpan database gagal
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal Menyimpan: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text('Gagal Menyimpan: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -283,22 +328,14 @@ class _ProductFormPageState extends State<ProductFormPage> {
         title: Text(widget.product == null ? 'Tambah Produk' : 'Edit Produk'),
         backgroundColor: Colors.orange,
         elevation: 0,
-        actions: [
-          // Tombol Cetak Barcode
-          IconButton(
-            onPressed: _isLoading ? null : _generateAndPrintBarcode,
-            icon: const Icon(Icons.print),
-            tooltip: 'Cetak Barcode / Save PDF',
-          )
-        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            // --- AREA GAMBAR (BARU) ---
+            // --- AREA GAMBAR ---
             GestureDetector(
-              onTap: _pickImage,
+              onTap: () => _showPicker(context),
               child: Container(
                 width: double.infinity,
                 height: 200,
@@ -312,10 +349,16 @@ class _ProductFormPageState extends State<ProductFormPage> {
                         children: [
                           ClipRRect(
                             borderRadius: BorderRadius.circular(20),
-                            child: Image.file(_imageFile!, width: double.infinity, height: double.infinity, fit: BoxFit.cover),
+                            child: Image.file(
+                              _imageFile!,
+                              width: double.infinity,
+                              height: double.infinity,
+                              fit: BoxFit.cover,
+                            ),
                           ),
                           Positioned(
-                            top: 10, right: 10,
+                            top: 10,
+                            right: 10,
                             child: CircleAvatar(
                               backgroundColor: Colors.red,
                               child: IconButton(
@@ -323,7 +366,7 @@ class _ProductFormPageState extends State<ProductFormPage> {
                                 onPressed: () => setState(() => _imageFile = null),
                               ),
                             ),
-                          )
+                          ),
                         ],
                       )
                     : (_existingImageUrl != null && widget.product != null)
@@ -331,28 +374,43 @@ class _ProductFormPageState extends State<ProductFormPage> {
                             children: [
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(20),
-                                child: Image.network(_existingImageUrl!, width: double.infinity, height: double.infinity, fit: BoxFit.cover),
+                                child: Image.network(
+                                  _existingImageUrl!,
+                                  width: double.infinity,
+                                  height: double.infinity,
+                                  fit: BoxFit.cover,
+                                ),
                               ),
                               Positioned(
-                                bottom: 10, left: 0, right: 0,
+                                bottom: 10,
+                                left: 0,
+                                right: 0,
                                 child: Center(
                                   child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 6,
+                                    ),
                                     decoration: BoxDecoration(
                                       color: Colors.black54,
                                       borderRadius: BorderRadius.circular(20),
                                     ),
-                                    child: const Text('Tap untuk ganti gambar', style: TextStyle(color: Colors.white)),
+                                    child: const Text(
+                                      'Tap untuk ganti gambar',
+                                      style: TextStyle(color: Colors.white),
+                                    ),
                                   ),
                                 ),
-                              )
+                              ),
                             ],
                           )
                         : const Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.add_photo_alternate_outlined, size: 50, color: Colors.grey),
-                              Text('Tambah Foto Produk', style: TextStyle(color: Colors.grey)),
+                              Icon(Icons.add_photo_alternate_outlined,
+                                  size: 50, color: Colors.grey),
+                              Text('Tap untuk ambil foto / galeri',
+                                  style: TextStyle(color: Colors.grey)),
                             ],
                           ),
               ),
@@ -366,36 +424,69 @@ class _ProductFormPageState extends State<ProductFormPage> {
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(20),
-                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)],
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    blurRadius: 10,
+                  ),
+                ],
               ),
               child: Column(
                 children: [
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
+                      const Text(
+                        'Barcode Produk',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
                       Row(
                         children: [
-                          const Icon(Icons.qr_code_2, color: Colors.deepPurple),
+                          Container(
+                            decoration: BoxDecoration(
+                              color: Colors.deepPurple.shade50,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: IconButton(
+                              icon: const Icon(Icons.qr_code_scanner,
+                                  color: Colors.deepPurple),
+                              onPressed: _startScan,
+                              tooltip: 'Pindai Barcode',
+                              constraints: const BoxConstraints(),
+                              padding: const EdgeInsets.all(8),
+                            ),
+                          ),
                           const SizedBox(width: 8),
-                          const Text('Barcode Produk', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                          Container(
+                            decoration: BoxDecoration(
+                              color: Colors.orange.shade50,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: IconButton(
+                              icon: const Icon(Icons.print, color: Colors.orange),
+                              onPressed: _isLoading
+                                  ? null
+                                  : _generateAndPrintBarcode,
+                              tooltip: 'Cetak Barcode / Save PDF',
+                              constraints: const BoxConstraints(),
+                              padding: const EdgeInsets.all(8),
+                            ),
+                          ),
                         ],
                       ),
-                      Container(
-                        decoration: BoxDecoration(color: Colors.deepPurple.shade50, borderRadius: BorderRadius.circular(8)),
-                        child: IconButton(
-                          icon: const Icon(Icons.qr_code_scanner, color: Colors.deepPurple),
-                          onPressed: _startScan,
-                          tooltip: 'Pindai Barcode',
-                          constraints: const BoxConstraints(),
-                          padding: const EdgeInsets.all(8),
-                        ),
-                      )
                     ],
                   ),
                   const SizedBox(height: 20),
                   Container(
                     padding: const EdgeInsets.all(15),
-                    decoration: BoxDecoration(color: Colors.grey[50], borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[50],
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
                     child: BarcodeWidget(
                       barcode: Barcode.code128(),
                       data: _barcodeController.text,
@@ -404,21 +495,49 @@ class _ProductFormPageState extends State<ProductFormPage> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  Text(_barcodeController.text, style: const TextStyle(letterSpacing: 2.0, fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black54)),
+                  Text(
+                    _barcodeController.text,
+                    style: const TextStyle(
+                      letterSpacing: 2.0,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black54,
+                    ),
+                  ),
                 ],
               ),
             ),
             const SizedBox(height: 24),
 
-            // --- FORM INPUT ---
-            _buildInputField(_namaController, 'Nama Produk', Icons.inventory_2_outlined, false),
+            // --- FORM INPUT (HANYA DATA MASTER) ---
+            _buildInputField(
+              _namaController,
+              'Nama Produk',
+              Icons.inventory_2_outlined,
+              false,
+            ),
             const SizedBox(height: 16),
-            _buildInputField(_kategoriController, 'Kategori', Icons.category_outlined, false),
+            _buildInputField(
+              _kategoriController,
+              'Kategori',
+              Icons.category_outlined,
+              false,
+            ),
             const SizedBox(height: 16),
-            _buildInputField(_hargaController, 'Harga Jual', Icons.sell_outlined, true),
+            _buildInputField(
+              _hargaController,
+              'Harga Jual',
+              Icons.sell_outlined,
+              true,
+            ),
             const SizedBox(height: 16),
-            _buildInputField(_stokController, 'Stok Awal', Icons.layers_outlined, true),
-            
+            _buildInputField(
+              _hargaBeliController,
+              'Harga Beli (Modal/HPP)',
+              Icons.monetization_on_outlined,
+              true,
+            ),
+
             const SizedBox(height: 30),
             SizedBox(
               width: double.infinity,
@@ -428,25 +547,52 @@ class _ProductFormPageState extends State<ProductFormPage> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.orange,
                   foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
                   elevation: 2,
                 ),
-                child: _isLoading 
-                    ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3)) 
-                    : const Text('SIMPAN PRODUK', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                child: _isLoading
+                    ? const SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 3,
+                        ),
+                      )
+                    : const Text(
+                        'SIMPAN PRODUK',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
               ),
-            )
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildInputField(TextEditingController controller, String label, IconData icon, bool isNumber) {
+  Widget _buildInputField(
+    TextEditingController controller,
+    String label,
+    IconData icon,
+    bool isNumber,
+  ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black54)),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: Colors.black54,
+          ),
+        ),
         const SizedBox(height: 8),
         TextField(
           controller: controller,
@@ -456,9 +602,18 @@ class _ProductFormPageState extends State<ProductFormPage> {
             filled: true,
             fillColor: Colors.white,
             prefixIcon: Icon(icon, color: Colors.orange),
-            contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Colors.orange, width: 2)),
+            contentPadding: const EdgeInsets.symmetric(
+              vertical: 16,
+              horizontal: 16,
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Colors.orange, width: 2),
+            ),
           ),
         ),
       ],

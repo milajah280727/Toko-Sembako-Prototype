@@ -24,7 +24,7 @@ class _ContinuousScannerPageState extends State<ContinuousScannerPage> {
   final Map<int, ScannedItem> _sessionMap = {};
   
   DateTime? _lastScanTime;
-  final ScrollController _scrollController = ScrollController();
+  // ScrollController dihapus karena tidak digunakan (membersihkan warning)
 
   void _handleDetect(BarcodeCapture capture) {
     final code = capture.barcodes.firstOrNull?.rawValue;
@@ -36,10 +36,19 @@ class _ContinuousScannerPageState extends State<ContinuousScannerPage> {
       return;
     }
 
+    // --- PERBAIKAN DI SINI ---
+    // Menambahkan parameter hargaBeli dan tanggalKadaluarsa pada objek dummy
     final product = widget.allProducts.firstWhere(
       (p) => p.barcode == code,
       orElse: () => Product(
-        id: -1, namaProduk: 'Tidak Ditemukan', kategori: '', hargaJual: 0, stok: 0, barcode: '',
+        id: -1, 
+        namaProduk: 'Tidak Ditemukan', 
+        kategori: '', 
+        hargaJual: 0, 
+        totalStok: 0, 
+        barcode: '',
+        hargaBeli: 0,             // WAJIB: Sesuai model baru
+        nearestExpDate: null,  // OPSIONAL: Sesuai model baru
       ),
     );
 
@@ -51,7 +60,7 @@ class _ContinuousScannerPageState extends State<ContinuousScannerPage> {
         if (_sessionMap.containsKey(product.id!)) {
           final item = _sessionMap[product.id]!;
           // Cek stok sebelum tambah
-          if (item.qty < product.stok) {
+          if (item.qty < product.totalStok) {
             item.qty++;
           } else {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -60,7 +69,7 @@ class _ContinuousScannerPageState extends State<ContinuousScannerPage> {
           }
         } else {
           // Tambahkan baru jika stok > 0
-          if (product.stok > 0) {
+          if (product.totalStok > 0) {
             _sessionMap[product.id!] = ScannedItem(product: product, qty: 1);
           } else {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -80,7 +89,7 @@ class _ContinuousScannerPageState extends State<ContinuousScannerPage> {
   void _incrementQty(int productId) {
     setState(() {
       final item = _sessionMap[productId]!;
-      if (item.qty < item.product.stok) {
+      if (item.qty < item.product.totalStok) {
         item.qty++;
       }
     });
@@ -171,7 +180,7 @@ class _ContinuousScannerPageState extends State<ContinuousScannerPage> {
                         
                         return ListTile(
                           title: Text(item.product.namaProduk, style: const TextStyle(fontWeight: FontWeight.w600)),
-                          subtitle: Text('Stok Tersedia: ${item.product.stok}'),
+                          subtitle: Text('Stok Tersedia: ${item.product.totalStok}'),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [

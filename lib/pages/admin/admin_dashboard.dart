@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../../supabase_service.dart';
 import '../../models/product_model.dart';
 import 'product_form_page.dart';
+// TAMBAHKAN IMPORT INI
+import 'restock_form_page.dart'; 
 import '../login_page.dart';
 
 class AdminDashboard extends StatefulWidget {
@@ -13,10 +15,10 @@ class AdminDashboard extends StatefulWidget {
 
 class _AdminDashboardState extends State<AdminDashboard> {
   List<Product> _products = []; // Semua produk asli
-  List<Product> _filteredProducts = []; // Produk hasil filter search (TAMBAHAN)
+  List<Product> _filteredProducts = []; // Produk hasil filter search
   bool _isLoading = true;
   
-  // Controller untuk Search (TAMBAHAN)
+  // Controller untuk Search
   final TextEditingController _searchController = TextEditingController();
   
   final int _currentUserId = 1; 
@@ -27,12 +29,16 @@ class _AdminDashboardState extends State<AdminDashboard> {
     _refreshProductList();
   }
 
+  // --- PERUBAHAN PENTING DI SINI ---
   Future<void> _refreshProductList() async {
     setState(() => _isLoading = true);
-    _products = await SupabaseService().getAllProducts();
+    
+    // PANGGIL FUNGSI YANG SUDAH MENGHITUNG STOK BATCH
+    // Jangan pakai getAllProducts() lagi di sini
+    _products = await SupabaseService().getProductsWithStock();
     
     // Sinkronkan list filtered dengan list asli saat pertama load
-    _filteredProducts = _products;
+    _filteredProducts = List.from(_products);
     
     // --- LOG: Membuka List Produk ---
     await SupabaseService().addLog(_currentUserId, 'Admin membuka daftar produk');
@@ -40,14 +46,12 @@ class _AdminDashboardState extends State<AdminDashboard> {
     setState(() => _isLoading = false);
   }
 
-  // --- FUNGSI FILTER SEARCH (TAMBAHAN) ---
+  // --- FUNGSI FILTER SEARCH ---
   void _filterProducts(String query) {
     setState(() {
       if (query.isEmpty) {
-        // Jika kosong, tampilkan semua
-        _filteredProducts = _products;
+        _filteredProducts = List.from(_products);
       } else {
-        // Filter berdasarkan nama produk (case insensitive)
         _filteredProducts = _products
             .where((p) => p.namaProduk.toLowerCase().contains(query.toLowerCase()))
             .toList();
@@ -108,19 +112,43 @@ class _AdminDashboardState extends State<AdminDashboard> {
           )
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const ProductFormPage()),
-          );
-          if (result == true) _refreshProductList();
-        },
-        label: const Text('Tambah Produk'),
-        icon: const Icon(Icons.add),
-        backgroundColor: Colors.orange,
-        foregroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      // --- FLOATING ACTION BUTTONS (DIPERBARUI) ---
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // 1. Tombol Restock
+          FloatingActionButton(
+            heroTag: "btn_restock",
+            onPressed: () async {
+              final result = await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const RestockFormPage()),
+              );
+              if (result == true) _refreshProductList();
+            },
+            backgroundColor: Colors.orange, // Diubah jadi Orange agar konsisten
+            child: const Icon(Icons.add_shopping_cart, color: Colors.white),
+            tooltip: 'Stok Masuk',
+          ),
+          const SizedBox(height: 12),
+          // 2. Tombol Tambah Produk
+          FloatingActionButton.extended(
+            heroTag: "btn_add_product",
+            onPressed: () async {
+              final result = await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const ProductFormPage()),
+              );
+              if (result == true) _refreshProductList();
+            },
+            label: const Text('Tambah Produk'),
+            icon: const Icon(Icons.add),
+            backgroundColor: Colors.orange,
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -151,7 +179,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
               ),
             ),
 
-          // --- SEARCH BAR (TAMBAHAN) ---
+          // --- SEARCH BAR ---
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Container(
@@ -170,7 +198,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   border: InputBorder.none,
                   contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
                 ),
-                onChanged: _filterProducts, // Panggil filter saat mengetik
+                onChanged: _filterProducts,
               ),
             ),
           ),
@@ -180,7 +208,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator(color: Colors.orange))
-                : _filteredProducts.isEmpty // Gunakan filteredProducts
+                : _filteredProducts.isEmpty
                     ? Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
@@ -195,10 +223,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
                         ),
                       )
                     : ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 80),
-                        itemCount: _filteredProducts.length, // Gunakan filteredProducts length
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 100), // Padding bawah ditambah agar tidak tertutup FAB
+                        itemCount: _filteredProducts.length,
                         itemBuilder: (context, index) {
-                          final product = _filteredProducts[index]; // Ambil dari filteredProducts
+                          final product = _filteredProducts[index];
                           return Container(
                             margin: const EdgeInsets.only(bottom: 12),
                             decoration: BoxDecoration(
@@ -258,7 +286,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                             children: [
                                               _buildBadge(product.kategori),
                                               const SizedBox(width: 8),
-                                              _buildStockBadge(product.stok),
+                                              // Memanggil totalStok yang sudah dihitung
+                                              _buildStockBadge(product.totalStok),
                                             ],
                                           ),
                                           const SizedBox(height: 4),

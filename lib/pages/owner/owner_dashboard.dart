@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:tokosembakovawal/supabase_service.dart';
 import '../../supabase_service.dart';
 import '../../models/product_model.dart';
 import '../login_page.dart';
@@ -18,33 +19,32 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
   Map<String, int> _financials = {'income': 0, 'expense': 0, 'profit': 0};
   List<Map<String, dynamic>> _transactions = [];
   List<Product> _lowStockProducts = [];
+  List<Product> _expiringProducts = []; // VARIABEL BARU: Produk Kadaluarsa
   List<Map<String, dynamic>> _logs = [];
   bool _isLoading = true;
 
   // Variabel Pencarian
   final TextEditingController _searchController = TextEditingController();
-  int _activeTabIndex = 0; // Track tab aktif
+  int _activeTabIndex = 0;
 
   // Data Hasil Filter
   late List<Map<String, dynamic>> _filteredTransactions;
   late List<Map<String, dynamic>> _filteredLogs;
   late List<Product> _filteredLowStock;
+  late List<Product> _filteredExpiring; // Filter untuk kadaluarsa
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
     
-    // Listener perubahan Tab
     _tabController.addListener(() {
       setState(() {
         _activeTabIndex = _tabController.index;
       });
-      // Reset pencarian saat ganti tab? (Opsional, disini kita biarkan textnya)
       _filterData();
     });
 
-    // Listener perubahan teks search
     _searchController.addListener(() {
       _filterData();
     });
@@ -62,11 +62,13 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
   Future<void> _loadAllData() async {
     setState(() => _isLoading = true);
     
+    // Tambahkan pemanggilan getExpiringProducts di sini
     final results = await Future.wait([
       SupabaseService().getFinancials(),
       SupabaseService().getAllTransactions(),
       SupabaseService().getLowStockProducts(),
       SupabaseService().getAllLogs(),
+      SupabaseService().getExpiringProducts(), // DATA BARU
     ]);
 
     setState(() {
@@ -74,24 +76,24 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
       _transactions = results[1] as List<Map<String, dynamic>>;
       _lowStockProducts = results[2] as List<Product>;
       _logs = results[3] as List<Map<String, dynamic>>;
+      _expiringProducts = results[4] as List<Product>; // SIMPAN DATA BARU
       
       // Init filtered lists
       _filteredTransactions = List.from(_transactions);
       _filteredLogs = List.from(_logs);
       _filteredLowStock = List.from(_lowStockProducts);
+      _filteredExpiring = List.from(_expiringProducts); // Init filter baru
       
       _isLoading = false;
     });
   }
 
-  // --- LOGIKA PENCARIAN ---
   void _filterData() {
     String query = _searchController.text.toLowerCase();
 
     setState(() {
-      // Filter berdasarkan tab yang aktif
       switch (_activeTabIndex) {
-        case 0: // Keuangan (Tidak perlu filter)
+        case 0: // Keuangan
           break;
         case 1: // Riwayat
           if (query.isEmpty) {
@@ -115,13 +117,14 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
             }).toList();
           }
           break;
-        case 3: // Stok Menipis
+        case 3: // Stok (Sekarang ada 2 kategori: Menipis & Kadaluarsa)
+          // Kita filter kedua list berdasarkan pencarian
           if (query.isEmpty) {
             _filteredLowStock = List.from(_lowStockProducts);
+            _filteredExpiring = List.from(_expiringProducts);
           } else {
-            _filteredLowStock = _lowStockProducts.where((item) {
-              return item.namaProduk.toLowerCase().contains(query);
-            }).toList();
+            _filteredLowStock = _lowStockProducts.where((item) => item.namaProduk.toLowerCase().contains(query)).toList();
+            _filteredExpiring = _expiringProducts.where((item) => item.namaProduk.toLowerCase().contains(query)).toList();
           }
           break;
       }
@@ -177,7 +180,6 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
     );
   }
 
-  // --- DIALOG 1: DETAIL TRANSAKSI ---
   void _showTransactionDetail(Map<String, dynamic> trans) async {
     showDialog(
       context: context,
@@ -186,7 +188,6 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
     );
 
     try {
-      // Pakai filtered data untuk cari detail, tapi aslinya tetap trans asli untuk id
       final details = await SupabaseService().getTransactionDetails(trans['id_transaksi']);
       
       if (mounted) Navigator.pop(context); 
@@ -258,7 +259,6 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
     }
   }
 
-  // --- DIALOG 2: DETAIL LOG ---
   void _showLogDetail(Map<String, dynamic> log) {
     final userData = log['users'];
     final namaUser = userData != null ? userData['nama_lengkap'] : 'Unknown';
@@ -315,7 +315,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
           controller: _tabController,
           indicatorColor: Colors.white,
           labelColor: Colors.white,
-          isScrollable: false, // Tetapkan agar tidak scroll
+          isScrollable: false,
           tabs: const [
             Tab(text: 'Keuangan', icon: Icon(Icons.account_balance_wallet)),
             Tab(text: 'Riwayat', icon: Icon(Icons.history)),
@@ -330,7 +330,6 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
       ),
       body: Column(
         children: [
-          // --- SEARCH BAR (Muncul di semua tab kecuali Keuangan) ---
           if (_activeTabIndex != 0)
             Container(
               color: Colors.orange,
@@ -344,9 +343,9 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
                 child: TextField(
                   controller: _searchController,
                   decoration: InputDecoration(
-                    hintText: _activeTabIndex == 1 ? 'Cari riwayat (Kasir/Nominal)...' :
-                                _activeTabIndex == 2 ? 'Cari log aktivitas...' :
-                                                  'Cari produk stok menipis...',
+                    hintText: _activeTabIndex == 3 ? 'Cari stok / kadaluarsa...' :
+                                _activeTabIndex == 1 ? 'Cari riwayat...' :
+                                                  'Cari log aktivitas...',
                     prefixIcon: const Icon(Icons.search, color: Colors.grey),
                     border: InputBorder.none,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
@@ -355,7 +354,6 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
               ),
             ),
 
-          // --- TAB BAR VIEW ---
           Expanded(
             child: _isLoading 
                 ? const Center(child: CircularProgressIndicator(color: Colors.orange))
@@ -365,7 +363,7 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
                       _buildKeuanganTab(),
                       _buildRiwayatTab(),
                       _buildLogTab(),
-                      _buildStokTab(),
+                      _buildStokTab(), // TAB STOK DIPERBARUI
                     ],
                   ),
           ),
@@ -510,34 +508,86 @@ class _OwnerDashboardState extends State<OwnerDashboard> with SingleTickerProvid
           );
   }
 
+  // --- TAB STOK YANG DIPERBARUI ---
   Widget _buildStokTab() {
-    return _filteredLowStock.isEmpty
-        ? Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.inventory, size: 60, color: Colors.grey[300]),
-                const SizedBox(height: 10),
-                Text(_lowStockProducts.isEmpty ? 'Stok aman, tidak ada barang menipis.' : 'Produk tidak ditemukan', style: const TextStyle(color: Colors.grey)),
-              ],
+    // Cek apakah ada data sama sekali
+    final hasData = _filteredExpiring.isNotEmpty || _filteredLowStock.isNotEmpty;
+
+    if (!hasData) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.inventory_2, size: 60, color: Colors.grey[300]),
+            const SizedBox(height: 10),
+            const Text('Stok aman, tidak ada peringatan.', style: TextStyle(color: Colors.grey)),
+          ],
+        ),
+      );
+    }
+
+    return ListView(
+      padding: const EdgeInsets.all(8),
+      children: [
+        // 1. BAGIAN KADALUARSA (Prioritas Tinggi)
+        if (_filteredExpiring.isNotEmpty) ...[
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8.0, vertical: 8),
+            child: Text(
+              '⚠️ PERINGATAN KADALUARSA (7 Hari)',
+              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red, fontSize: 14),
             ),
-          )
-        : ListView.builder(
-            padding: const EdgeInsets.all(8),
-            itemCount: _filteredLowStock.length,
-            itemBuilder: (context, index) {
-              final product = _filteredLowStock[index];
-              return Card(
-                color: Colors.orange[50], 
-                margin: const EdgeInsets.symmetric(vertical: 4), 
-                child: ListTile(
-                  leading: const Icon(Icons.warning, color: Colors.red),
-                  title: Text(product.namaProduk, style: const TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Text('Kategori: ${product.kategori}'),
-                  trailing: Text('Sisa: ${product.stok}', style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 16))
+          ),
+          ..._filteredExpiring.map((product) {
+            // Hitung selisih hari
+            final daysLeft = product.nearestExpDate!.difference(DateTime.now()).inDays;
+            final isExpired = daysLeft < 0;
+            
+            return Card(
+              color: isExpired ? Colors.red.shade100 : Colors.orange.shade50, 
+              margin: const EdgeInsets.symmetric(vertical: 4), 
+              child: ListTile(
+                leading: const Icon(Icons.timer, color: Colors.red),
+                title: Text(product.namaProduk, style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text('Kategori: ${product.kategori}'),
+                trailing: Text(
+                  isExpired ? 'Kadaluarsa!' : '$daysLeft Hari Lagi',
+                  style: TextStyle(
+                    color: isExpired ? Colors.red : Colors.deepOrange, 
+                    fontWeight: FontWeight.bold, 
+                    fontSize: 14
+                  ),
                 ),
-              );
-            },
-          );
+              ),
+            );
+          }).toList(),
+          
+          const Divider(height: 30),
+        ],
+
+        // 2. BAGIAN STOK MENIPIS (Prioritas Sedang)
+        if (_filteredLowStock.isNotEmpty) ...[
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8.0, vertical: 8),
+            child: Text(
+              '📉 STOK MENIPIS',
+              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange, fontSize: 14),
+            ),
+          ),
+          ..._filteredLowStock.map((product) {
+            return Card(
+              color: Colors.yellow[50], 
+              margin: const EdgeInsets.symmetric(vertical: 4), 
+              child: ListTile(
+                leading: const Icon(Icons.inventory, color: Colors.orange),
+                title: Text(product.namaProduk, style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text('Kategori: ${product.kategori}'),
+                trailing: Text('Sisa: ${product.totalStok}', style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 16))
+              ),
+            );
+          }).toList(),
+        ],
+      ],
+    );
   }
 }
